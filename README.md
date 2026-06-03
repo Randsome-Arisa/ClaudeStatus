@@ -49,11 +49,12 @@ Claude Code CLI 桌面状态提示工具 — 系统托盘图标实时反映 Clau
 
 #### 1. 获取二进制
 
-从 [GitHub Releases](https://github.com/arisa/ClaudeStatus/releases) 下载：
+从 [GitHub Releases](https://github.com/Randsome-Arisa/ClaudeStatus/releases) 下载：
 
 ```bash
-curl -L -o claude-status https://github.com/arisa/ClaudeStatus/releases/latest/download/claude-status-linux-x86_64
-chmod +x claude-status
+curl -L -o claude-status https://github.com/Randsome-Arisa/ClaudeStatus/releases/latest/download/claude-status
+curl -L -o claude-status-send https://github.com/Randsome-Arisa/ClaudeStatus/releases/latest/download/claude-status-send
+chmod +x claude-status claude-status-send
 ```
 
 #### 2. 安装 Hook + 启动
@@ -81,11 +82,11 @@ echo '{"event":"waiting"}' | nc -w 1 -U /tmp/claude-status.sock   # 托盘变黄
 
 #### 1. 获取二进制
 
-从 [GitHub Releases](https://github.com/arisa/ClaudeStatus/releases) 下载两个文件：
+从 [GitHub Releases](https://github.com/Randsome-Arisa/ClaudeStatus/releases) 下载两个文件：
 
 ```powershell
-# claude-status.exe       — 守护进程（主程序）
-# claude-status-send.exe  — IPC 发送器（Hook 脚本用）
+Invoke-WebRequest -Uri "https://github.com/Randsome-Arisa/ClaudeStatus/releases/latest/download/claude-status.exe" -OutFile "claude-status.exe"
+Invoke-WebRequest -Uri "https://github.com/Randsome-Arisa/ClaudeStatus/releases/latest/download/claude-status-send.exe" -OutFile "claude-status-send.exe"
 ```
 
 将两个 exe 放在同一目录，并**加入 PATH**（或放在 Claude Code 能访问的固定路径）。
