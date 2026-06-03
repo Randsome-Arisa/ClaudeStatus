@@ -144,27 +144,58 @@ fn run_daemon(verbose: bool, log_file: Option<String>) -> Result<()> {
     log::info!("[DEBUG] 守护进程就绪，监听 IPC 事件...");
 
     // ─── 主事件循环 ───
+    //
+    // 事件合批优化：
+    // 频繁状态切换（如 waiting↔working）时，每次 set_icon() 底层走 D-Bus 同步调用，
+    // 串行等待多个 D-Bus 往返会造成可感知的延迟。
+    // 方案：第一个事件到达后，非阻塞排空 channel 中所有后续事件，
+    // 每个事件都通过状态机处理（保证转换正确），但只在最后执行一次 UI 更新。
     loop {
+        let mut should_quit = false;
+
         match rx.recv_timeout(Duration::from_secs(1)) {
             Ok(IpcMessage::Quit) => {
                 log::info!("[DEBUG] 收到 quit 命令，正在退出...");
                 break;
             }
-            Ok(IpcMessage::Event(event)) => {
-                let new_state = state::transition(&state, &event);
+            Ok(IpcMessage::Event(first_event)) => {
+                // 将第一个事件通过状态机
+                let mut new_state = state::transition(&state, &first_event);
+
+                // 非阻塞排空 channel 中所有后续事件，
+                // 每个事件都经过状态机处理（保证连续多步转换正确），
+                // 但只在最后执行一次 D-Bus 调用更新托盘。
+                loop {
+                    match rx.try_recv() {
+                        Ok(IpcMessage::Quit) => {
+                            should_quit = true;
+                            break;
+                        }
+                        Ok(IpcMessage::Event(event)) => {
+                            log::debug!("[DEBUG] 合批事件: {:?}", event);
+                            new_state = state::transition(&new_state, &event);
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            log::error!("[DEBUG] IPC channel 断开，守护进程退出");
+                            should_quit = true;
+                            break;
+                        }
+                    }
+                }
 
                 if new_state != state {
                     log::info!(
                         "[DEBUG] 状态转换: {} → {} (事件: {:?})",
                         state,
                         new_state,
-                        event
+                        first_event
                     );
 
                     state = new_state;
                     state_since = Instant::now();
 
-                    // 驱动输出
+                    // 驱动输出（仅一次 D-Bus 调用）
                     update_tray(&tray_mgr, &state);
                     write_state_file(&state_file, &state);
 
@@ -211,6 +242,11 @@ fn run_daemon(verbose: bool, log_file: Option<String>) -> Result<()> {
                 log::error!("[DEBUG] IPC channel 断开，守护进程退出");
                 break;
             }
+        }
+
+        if should_quit {
+            log::info!("[DEBUG] 收到 quit 命令，正在退出...");
+            break;
         }
 
         // 每次事件/超时后处理平台事件：

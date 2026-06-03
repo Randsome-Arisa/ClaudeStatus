@@ -11,6 +11,7 @@ ClaudeStatus 的架构决策、设计权衡和替代方案记录。这篇文章�
 - [错误处理策略](#错误处理策略)
 - [Linux 托盘：GTK 事件循环的必要性](#linux-托盘gtk-事件循环的必要性)
 - [通知频率限制](#通知频率限制)
+- [事件合批优化](#事件合批优化)
 - [超时退化机制](#超时退化机制)
 - [平台抽象](#平台抽象)
 
@@ -265,6 +266,49 @@ if let Some(last) = self.last_notification {
 ```
 
 注意：被跳过的通知不更新 `last_notification` 时间戳 —— 这确保了上次发送 10 秒后，下一条通知一定会发出。
+
+---
+
+## 事件合批优化
+
+### 问题：频繁状态切换的托盘延迟
+
+`tray.set_icon()` 在 Linux 上通过 `libayatana-appindicator3` → GDBus 同步调用更新 GNOME Shell 面板图标。每次调用阻塞当前线程 5~50ms，等待 D-Bus daemon + GNOME Shell 往返。
+
+在频繁 waiting↔working 切换场景中（Claude 快速连续触发 PermissionRequest + PostToolUse），事件循环按以下串行流程处理：
+
+```
+recv_timeout → set_icon(yellow) → D-Bus 等待 → GTK pump
+            → recv_timeout → set_icon(green)  → D-Bus 等待 → GTK pump
+```
+
+两次 D-Bus 同步调用累积产生可感知的延迟。
+
+### 解决方案：事件合批（Event Coalescing）
+
+第一个事件到达后，非阻塞排空 channel 中所有后续消息。**每个事件都通过状态机处理**（保证连续多步转换正确，如 WORKING→WAITING→WORKING），但只在最后执行**一次** UI 更新。
+
+```
+recv_timeout → 取出事件1 (waiting) → transition: WORKING → WAITING
+             → try_recv: 事件2 (resumed) → transition: WAITING → WORKING
+             → try_recv: 队列空 → break
+             → 单次 set_icon(green) + D-Bus 往返 → GTK pump
+```
+
+效果：中间状态被跳过，D-Bus 调用次数从 N 次降到 1 次。
+
+### 设计权衡
+
+| 维度 | 合批前 | 合批后 |
+|------|--------|--------|
+| D-Bus 调用数 | 每事件 1 次 | 每批次 1 次 |
+| 中间状态可见性 | 每个状态都渲染 | 只渲染最终状态 |
+| 中间声音/通知 | 每个状态触发 | **被跳过**（有意为之） |
+| 状态转换正确性 | 每次单步 | 等效（连续多步 transition） |
+
+**跳过中间声音/通知是预期行为**：如果用户在 100ms 内完成 PermissionRequest → 批准 → PostToolUse，中间 Waiting 状态的提示音和通知对用户没有实际价值（用户刚操作完），反而形成噪音。
+
+注意：合批只在 channel 中有**已排队**的事件时生效。正常单事件场景（事件间隔 > 1s）行为不变。
 
 ---
 
