@@ -1,0 +1,16 @@
+[package]
+name = "claude-status-send"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ClaudeStatus IPC 发送器 — 向守护进程写入 JSON 事件（替代 nc）"
+
+[[bin]]
+name = "claude-status-send"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+interprocess.workspace = true

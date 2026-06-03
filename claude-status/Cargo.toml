@@ -1,0 +1,38 @@
+[package]
+name = "claude-status"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Claude Code CLI 桌面状态提示工具 — 系统托盘图标 + 声音 + 通知"
+
+[[bin]]
+name = "claude-status"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+interprocess.workspace = true
+tray-icon.workspace = true
+notify-rust.workspace = true
+rodio.workspace = true
+log.workspace = true
+env_logger.workspace = true
+dirs.workspace = true
+
+# 解码内嵌的圆形 PNG 托盘图标
+png = "0.17"
+
+# Linux: tray-icon / libayatana-appindicator3 需要 GTK 运行时
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+# Windows: 消息泵处理托盘图标事件
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+] }

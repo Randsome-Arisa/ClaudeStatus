@@ -1,0 +1,38 @@
+[source.crates-io]
+replace-with = 'ustc'
+
+[source.ustc]
+registry = "git://mirrors.ustc.edu.cn/crates.io-index"
+
+[workspace]
+members = ["claude-status", "claude-status-send"]
+resolver = "2"
+
+# 后续加入 Windows send helper:
+# members = ["claude-status", "claude-status-send"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/arisa/ClaudeStatus"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+interprocess = "2"
+tray-icon = "0.19"
+notify-rust = "4"
+rodio = "0.20"
+log = "0.4"
+env_logger = "0.11"
+dirs = "6"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

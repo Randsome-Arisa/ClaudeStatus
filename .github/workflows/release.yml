@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Linux Release ──
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libasound2-dev libdbus-1-dev libnotify-dev libgtk-4-dev libayatana-appindicator3-dev
+
+      - name: Build release (workspace)
+        run: cargo build --release --workspace
+
+      - name: Strip binaries
+        run: |
+          strip target/release/claude-status
+          strip target/release/claude-status-send
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-status-linux-x86_64
+          path: |
+            target/release/claude-status
+            target/release/claude-status-send
+
+  # ── Windows Release ──
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release (workspace)
+        run: cargo build --release --workspace
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-status-windows-x86_64
+          path: |
+            target/release/claude-status.exe
+            target/release/claude-status-send.exe
+
+  # ── Create GitHub Release ──
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: claude-status-*
+          merge-multiple: true
+
+      - name: Display structure of downloaded files
+        run: ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            claude-status-linux-x86_64/claude-status
+            claude-status-linux-x86_64/claude-status-send
+            claude-status-windows-x86_64/claude-status.exe
+            claude-status-windows-x86_64/claude-status-send.exe
+          generate_release_notes: true

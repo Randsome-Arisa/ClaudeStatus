@@ -1,0 +1,8 @@
+/target
+
+# 编译产物（不应提交的二进制）
+/claude-status/claude-status
+/claude-status-send/claude-status-send
+
+# 本地配置（包含用户特定设置）
+.claude/
