@@ -32,7 +32,7 @@ Claude Code 桌面状态提示工具 — 系统托盘图标 + 声音 + 桌面通
     ├── claude-status/              # 守护进程（主程序）
     │   ├── Cargo.toml              # 14 个依赖
     │   └── src/
-    │       ├── main.rs             # CLI + daemon 事件循环（含平台事件泵）
+    │       ├── main.rs             # CLI + daemon 事件循环（含平台事件泵和事件合批, 6 tests）
     │       ├── state.rs            # 状态机 (21 tests)
     │       ├── ipc.rs              # IPC listener (Unix Socket / Named Pipe, 10 tests)
     │       ├── tray.rs             # 系统托盘（tray-icon, 4 个圆形 PNG 内嵌）
@@ -104,6 +104,7 @@ IPC Listener (interprocess v2) → mpsc::channel → 状态机 (state.rs)
 - [x] WINDOWS-P3 → Windows 消息泵 (`PeekMessageW`/`DispatchMessageW`)
 - [x] WINDOWS-P4 → 交叉编译通过 (`x86_64-pc-windows-gnu`)
 - [x] DOCS → README.md + CLAUDE.md Windows 安装/使用文档
+- [x] BUGFIX 事件合批丢弃中间状态声音/通知 → `record_side_effects()` 补触发机制 (6 tests)
 
 **用户环境:**
 - ✅ Ubuntu 24.04, GNOME 46, Wayland
@@ -124,7 +125,7 @@ IPC Listener (interprocess v2) → mpsc::channel → 状态机 (state.rs)
 ```bash
 # 开发
 cargo check          # 快速编译检查
-cargo test           # 运行 21 个单元测试
+cargo test           # 运行 27 个单元测试
 cargo build --release  # Release 编译 (~3.3MB)
 
 # 使用

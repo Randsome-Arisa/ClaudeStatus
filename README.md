@@ -234,7 +234,7 @@ claude-status/
 ├── claude-status/                 # 守护进程（主程序）
 │   ├── Cargo.toml                 # 14 个依赖
 │   └── src/
-│       ├── main.rs                # CLI + 守护进程事件循环
+│       ├── main.rs                # CLI + 守护进程事件循环（含事件合批, 6 tests）
 │       ├── state.rs               # 状态机（5 状态, 10 转换, 21 tests）
 │       ├── ipc.rs                 # Unix Socket / Named Pipe listener (10 tests)
 │       ├── tray.rs                # 系统托盘（圆形 PNG 内嵌）
@@ -313,7 +313,7 @@ claude-status/
 ## 开发
 
 ```bash
-# 运行测试（21 个单元测试）
+# 运行测试（27 个单元测试）
 cargo test
 
 # 编译检查（最快）

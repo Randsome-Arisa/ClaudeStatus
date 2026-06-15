@@ -291,18 +291,58 @@ recv_timeout → 取出事件1 (waiting) → transition: WORKING → WAITING
              → 单次 set_icon(green) + D-Bus 往返 → GTK pump
 ```
 
-效果：中间状态被跳过，D-Bus 调用次数从 N 次降到 1 次。
+效果：中间状态的托盘更新被跳过，D-Bus 调用次数从 N 次降到 1 次。最终状态的托盘颜色正确反映当前状态。
 
-### 设计权衡
+### 副作用保留机制（v0.1.0 BUGFIX）
 
-| 维度 | 合批前 | 合批后 |
-|------|--------|--------|
-| D-Bus 调用数 | 每事件 1 次 | 每批次 1 次 |
-| 中间状态可见性 | 每个状态都渲染 | 只渲染最终状态 |
-| 中间声音/通知 | 每个状态触发 | **被跳过**（有意为之） |
-| 状态转换正确性 | 每次单步 | 等效（连续多步 transition） |
+**原始问题**：事件合批后，副作用的触发只检查**最终状态**。在快速事件序列如 `Done → Working`（Claude 完成任务的瞬间用户立即发送新 prompt）中，合批循环将状态 Done 覆盖为 Working，最终状态 Working 不需要声音和通知 → Done 的提示音和通知被静默丢弃。
 
-**跳过中间声音/通知是预期行为**：如果用户在 100ms 内完成 PermissionRequest → 批准 → PostToolUse，中间 Waiting 状态的提示音和通知对用户没有实际价值（用户刚操作完），反而形成噪音。
+**修复**：在合批循环中通过 `record_side_effects()` 跟踪"曾到达过"的副作用状态。`triggered_sound` 和 `triggered_notify` 分别记录合批期间最早触发副作用的状态。合批结束后，如果最终状态不再需要声音/通知，补触发记录下来的中间状态效果。
+
+```rust
+fn record_side_effects(
+    state: &DaemonState,
+    sound: &mut Option<sound::SoundEvent>,
+    notify: &mut Option<DaemonState>,
+) {
+    // 仅记录第一个需要声音的状态
+    if sound.is_none() {
+        match state {
+            DaemonState::Done => *sound = Some(sound::SoundEvent::Done),
+            DaemonState::Waiting => *sound = Some(sound::SoundEvent::Waiting),
+            _ => {}
+        }
+    }
+    // 仅记录第一个需要通知的状态
+    if notify.is_none() && state.needs_notification() {
+        *notify = Some(state.clone());
+    }
+}
+```
+
+合批结束后：
+```rust
+// 优先用最终状态的需要，否则补触发合批期间的中间状态
+let sound_to_play = match &state {
+    DaemonState::Done => Some(sound::SoundEvent::Done),
+    DaemonState::Waiting => Some(sound::SoundEvent::Waiting),
+    _ => triggered_sound,  // 补触发中间状态的声音
+};
+if let Some(se) = sound_to_play {
+    sound_player.play(se);
+}
+```
+
+### 设计权衡（更新后）
+
+| 维度 | 合批前 | 合批后（v0.1.0 初版） | 合批后（BUGFIX） |
+|------|--------|----------------------|-------------------|
+| D-Bus 调用数 | 每事件 1 次 | 每批次 1 次 | 每批次 1 次 |
+| 中间状态可见性 | 每个状态都渲染 | 只渲染最终状态 | 只渲染最终状态 |
+| 中间声音/通知 | 每个状态触发 | **静默丢弃** ❌ | **保留并补触发** ✅ |
+| 状态转换正确性 | 每次单步 | 等效（连续多步 transition） | 等效 |
+
+**修复后的行为**：托盘图标仍然只更新一次（最终状态），但中间 Done/Waiting 状态的提示音和通知会被保留。如果最终状态本身需要声音（如 `Done`），则触发最终状态的声音；如果最终状态不需要（如 Done→Working 后变为 Working），则补触发中间 Done 状态的声音。
 
 注意：合批只在 channel 中有**已排队**的事件时生效。正常单事件场景（事件间隔 > 1s）行为不变。
 

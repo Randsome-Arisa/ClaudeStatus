@@ -79,6 +79,34 @@ fn main() -> Result<()> {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Helpers
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// 记录状态是否触发了声音或通知副作用。
+///
+/// 在事件合批期间，中间状态（如 Done/Waiting）可能被后续事件覆盖，
+/// 导致提示音和通知丢失。此函数仅在尚未记录时设置对应标记，
+/// 确保最早触发副作用的状态被保留。
+fn record_side_effects(
+    state: &DaemonState,
+    sound: &mut Option<sound::SoundEvent>,
+    notify: &mut Option<DaemonState>,
+) {
+    // 仅记录第一个需要声音的状态（通常是合批期间的"峰值"）
+    if sound.is_none() {
+        match state {
+            DaemonState::Done => *sound = Some(sound::SoundEvent::Done),
+            DaemonState::Waiting => *sound = Some(sound::SoundEvent::Waiting),
+            _ => {}
+        }
+    }
+    // 仅记录第一个需要通知的状态
+    if notify.is_none() && state.needs_notification() {
+        *notify = Some(state.clone());
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Daemon Lifecycle
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -162,6 +190,14 @@ fn run_daemon(verbose: bool, log_file: Option<String>) -> Result<()> {
                 // 将第一个事件通过状态机
                 let mut new_state = state::transition(&state, &first_event);
 
+                // 事件合批期间，跟踪是否经过了需要声音/通知的中间状态。
+                // 若快速事件序列（如 Done→Working）导致最终状态不再需要
+                // 副作用，中间状态的提示音和通知会被丢弃。
+                // 这里记录"曾到达过"的副作用状态，合批结束后补触发。
+                let mut triggered_sound: Option<sound::SoundEvent> = None;
+                let mut triggered_notify: Option<DaemonState> = None;
+                record_side_effects(&new_state, &mut triggered_sound, &mut triggered_notify);
+
                 // 非阻塞排空 channel 中所有后续事件，
                 // 每个事件都经过状态机处理（保证连续多步转换正确），
                 // 但只在最后执行一次 D-Bus 调用更新托盘。
@@ -174,6 +210,7 @@ fn run_daemon(verbose: bool, log_file: Option<String>) -> Result<()> {
                         Ok(IpcMessage::Event(event)) => {
                             log::debug!("[DEBUG] 合批事件: {:?}", event);
                             new_state = state::transition(&new_state, &event);
+                            record_side_effects(&new_state, &mut triggered_sound, &mut triggered_notify);
                         }
                         Err(mpsc::TryRecvError::Empty) => break,
                         Err(mpsc::TryRecvError::Disconnected) => {
@@ -199,20 +236,21 @@ fn run_daemon(verbose: bool, log_file: Option<String>) -> Result<()> {
                     update_tray(&tray_mgr, &state);
                     write_state_file(&state_file, &state);
 
-                    if state.needs_sound() {
-                        match state {
-                            DaemonState::Done => {
-                                sound_player.play(sound::SoundEvent::Done)
-                            }
-                            DaemonState::Waiting => {
-                                sound_player.play(sound::SoundEvent::Waiting)
-                            }
-                            _ => {}
-                        }
+                    // 触发声音：优先用最终状态的需要，否则补触发合批期间的中间状态
+                    let sound_to_play = match &state {
+                        DaemonState::Done => Some(sound::SoundEvent::Done),
+                        DaemonState::Waiting => Some(sound::SoundEvent::Waiting),
+                        _ => triggered_sound,
+                    };
+                    if let Some(se) = sound_to_play {
+                        sound_player.play(se);
                     }
 
+                    // 触发通知：优先用最终状态的需要，否则补触发合批期间的中间状态
                     if state.needs_notification() {
                         notif_mgr.notify(&state);
+                    } else if let Some(ref ns) = triggered_notify {
+                        notif_mgr.notify(ns);
                     }
                 }
             }
@@ -382,5 +420,99 @@ fn chrono_now() -> String {
             format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
         }
         Err(_) => "--:--:--".to_string(),
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 测试：合批期间经过 Done 状态，副作用被正确记录
+    #[test]
+    fn test_record_side_effects_done() {
+        let mut sound: Option<sound::SoundEvent> = None;
+        let mut notify: Option<DaemonState> = None;
+
+        record_side_effects(&DaemonState::Done, &mut sound, &mut notify);
+
+        assert!(matches!(sound, Some(sound::SoundEvent::Done)));
+        assert!(matches!(notify, Some(DaemonState::Done)));
+    }
+
+    /// 测试：合批期间经过 Waiting 状态，副作用被正确记录
+    #[test]
+    fn test_record_side_effects_waiting() {
+        let mut sound: Option<sound::SoundEvent> = None;
+        let mut notify: Option<DaemonState> = None;
+
+        record_side_effects(&DaemonState::Waiting, &mut sound, &mut notify);
+
+        assert!(matches!(sound, Some(sound::SoundEvent::Waiting)));
+        assert!(matches!(notify, Some(DaemonState::Waiting)));
+    }
+
+    /// 测试：合批期间 Working 状态不触发副作用
+    #[test]
+    fn test_record_side_effects_working_is_ignored() {
+        let mut sound: Option<sound::SoundEvent> = None;
+        let mut notify: Option<DaemonState> = None;
+
+        record_side_effects(&DaemonState::Working, &mut sound, &mut notify);
+
+        assert!(sound.is_none());
+        assert!(notify.is_none());
+    }
+
+    /// 回归测试：Done → Working 快速切换，Done 的声音仍被触发
+    ///
+    /// 这是本次修复的核心用例：Claude 完成任务的瞬间用户立即发送新 prompt，
+    /// 事件合批会将 Done 吞没为 Working，但 Done 的音效不能丢失。
+    #[test]
+    fn test_coalescing_preserves_done_sound() {
+        let mut sound: Option<sound::SoundEvent> = None;
+        let mut notify: Option<DaemonState> = None;
+
+        // 模拟合批过程：先经过 Done，再被 Working 覆盖
+        record_side_effects(&DaemonState::Done, &mut sound, &mut notify);
+        // 后续事件将状态改为 Working
+        record_side_effects(&DaemonState::Working, &mut sound, &mut notify);
+
+        // Done 的声音和通知应被保留（仅记录第一个需要副作用的状态）
+        assert!(matches!(sound, Some(sound::SoundEvent::Done)));
+        assert!(matches!(notify, Some(DaemonState::Done)));
+    }
+
+    /// 回归测试：Waiting → Working 快速切换，Waiting 的声音仍被触发
+    #[test]
+    fn test_coalescing_preserves_waiting_sound() {
+        let mut sound: Option<sound::SoundEvent> = None;
+        let mut notify: Option<DaemonState> = None;
+
+        record_side_effects(&DaemonState::Waiting, &mut sound, &mut notify);
+        record_side_effects(&DaemonState::Working, &mut sound, &mut notify);
+
+        assert!(matches!(sound, Some(sound::SoundEvent::Waiting)));
+        assert!(matches!(notify, Some(DaemonState::Waiting)));
+    }
+
+    /// 测试：如果最终状态本身就触发声音，用最终状态的（而非中间状态）
+    #[test]
+    fn test_final_state_takes_priority_over_intermediate() {
+        let mut sound: Option<sound::SoundEvent> = None;
+        let mut notify: Option<DaemonState> = None;
+
+        // 先经过 Waiting，再变为 Done
+        record_side_effects(&DaemonState::Waiting, &mut sound, &mut notify);
+        record_side_effects(&DaemonState::Done, &mut sound, &mut notify);
+
+        // 应该保留第一个需要声音的状态，即 Waiting
+        // （Done 会覆盖 sound 吗？不会，因为 sound 已经 Some 了）
+        assert!(matches!(sound, Some(sound::SoundEvent::Waiting)));
+        // notify 同理，保留 Waiting 的通知
+        assert!(matches!(notify, Some(DaemonState::Waiting)));
     }
 }

@@ -45,6 +45,7 @@ impl DaemonState {
     }
 
     /// 是否需要播放提示音（Working 状态时间长，不需要声音通知）
+    #[allow(dead_code)]
     pub fn needs_sound(&self) -> bool {
         matches!(self, DaemonState::Done | DaemonState::Waiting)
     }
