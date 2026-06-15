@@ -21,7 +21,8 @@ Claude Code CLI 桌面状态提示工具 — 系统托盘图标实时反映 Clau
 ```
 ┌─────────────────────────────────────────────────┐
 │ Claude Code                                     │
-│  PreToolUse / PostToolUse / Stop / PermissionReq │
+│  UserPromptSubmit / PreToolUse / PostToolUse    │
+│  / Stop / PermissionRequest                     │
 │        │                                         │
 │        │ echo '{"event":"done"}' | nc -U ...     │
 │        ▼                                         │
@@ -114,7 +115,7 @@ Invoke-WebRequest -Uri "https://github.com/Randsome-Arisa/ClaudeStatus/releases/
 
 | 你看到的 | 含义 |
 |----------|------|
-| 🟢 托盘变绿 | Claude 正在工作中 |
+| 🟢 托盘变绿 | Claude 正在思考/工作中（提交 prompt 即变绿） |
 | 🟡 托盘变黄 + 提示音 + 通知 | Claude 在等你授权 |
 | 🔴 托盘变红 + 提示音 + 通知 | Claude 已完成任务 |
 | ⚫ 托盘变灰 | 空闲（60 秒无事件自动恢复） |
@@ -140,20 +141,20 @@ claude-status <子命令>
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
-    IDLE --> WORKING : PreToolUse
+    IDLE --> WORKING : UserPromptSubmit / PreToolUse
     WORKING --> DONE : Stop
     WORKING --> WAITING : PermissionRequest
     WAITING --> WORKING : PostToolUse / PreToolUse
     WAITING --> DONE : Stop
-    DONE --> WORKING : PreToolUse
+    DONE --> WORKING : UserPromptSubmit / PreToolUse
     DONE --> IDLE : 60s 超时
-    ERROR --> WORKING : PreToolUse
+    ERROR --> WORKING : UserPromptSubmit / PreToolUse
     ERROR --> IDLE : 30s 超时
 ```
 
 | 当前状态 | 触发事件 | 新状态 | 托盘 | 声音 | 通知 |
 |----------|----------|--------|------|------|------|
-| IDLE | `working` (PreToolUse) | WORKING | 🟢 绿 | — | — |
+| IDLE | `working` (UserPromptSubmit 或 PreToolUse) | WORKING | 🟢 绿 | — | — |
 | WORKING | `done` (Stop) | DONE | 🔴 红 | done.wav | "Claude 已完成任务" |
 | WORKING | `waiting` (PermissionRequest) | WAITING | 🟡 黄 | wating.wav | "Claude 正在等待你的操作" |
 | WAITING | `resumed` / `working` | WORKING | 🟢 绿 | — | — |
@@ -173,7 +174,7 @@ stateDiagram-v2
 ### Hook 事件（Claude Code → Daemon）
 
 ```json
-{"event": "working"}    // PreToolUse：Claude 开始工作
+{"event": "working"}    // UserPromptSubmit 或 PreToolUse：Claude 开始思考/工作
 {"event": "resumed"}    // PostToolUse：用户已授权，继续工作
 {"event": "done"}       // Stop：Claude 完成当前任务
 {"event": "waiting"}    // PermissionRequest：Claude 等待用户授权
@@ -193,6 +194,10 @@ stateDiagram-v2
 // Linux — nc 直接写 Unix Socket
 {
   "hooks": {
+    "UserPromptSubmit": [{   // 提交 prompt 时立即触发，确保思考阶段图标就变绿
+      "type": "command",
+      "command": "echo '{\"event\":\"working\"}' | nc -w 1 -U /tmp/claude-status.sock || true"
+    }],
     "PreToolUse": [{
       "type": "command",
       "command": "echo '{\"event\":\"working\"}' | nc -w 1 -U /tmp/claude-status.sock || true"
@@ -204,6 +209,10 @@ stateDiagram-v2
 // Windows — claude-status-send.exe 写 Named Pipe
 {
   "hooks": {
+    "UserPromptSubmit": [{   // 提交 prompt 时立即触发，确保思考阶段图标就变绿
+      "type": "command",
+      "command": "claude-status-send.exe --event working"
+    }],
     "PreToolUse": [{
       "type": "command",
       "command": "claude-status-send.exe --event working"
@@ -231,7 +240,7 @@ claude-status/
 │       ├── tray.rs                # 系统托盘（圆形 PNG 内嵌）
 │       ├── sound.rs               # 音频播放（rodio, WAV 内嵌）
 │       ├── notify.rs              # 桌面通知（notify-rust, 10s 限频）
-│       ├── install.rs             # Hook 安装/卸载（Linux nc / Win send）
+│       ├── install.rs             # Hook 安装/卸载（5 hooks: UserPromptSubmit + PreToolUse/PostToolUse/Stop/PermissionRequest）
 │       ├── config.rs              # 日志（env_logger）
 │       └── platform.rs            # Linux/Windows 条件编译
 ├── claude-status-send/            # IPC 发送器（小型 helper）

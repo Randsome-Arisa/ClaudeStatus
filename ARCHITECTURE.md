@@ -22,7 +22,7 @@ ClaudeStatus 的架构决策、设计权衡和替代方案记录。这篇文章�
 ```
 ┌─────────────────────────┐       JSON via Unix Socket
 │  Claude Code            │ ──────────────────────────────┐
-│  Hooks (4 events)       │                               │
+│  Hooks (5 events)       │                               │
 │  echo '{"event":"..."}' │                               ▼
 │  | nc -U /tmp/...sock   │              ┌────────────────────────────┐
 └─────────────────────────┘              │  ClaudeStatus Daemon       │
@@ -81,28 +81,24 @@ ClaudeStatus 的架构决策、设计权衡和替代方案记录。这篇文章�
 ### 转换规则
 
 ```
-                   ┌─────────┐
-          ┌───────►│  IDLE   │◄──────────┐
-          │        └────┬────┘           │
-          │ PreToolUse  │                │ 60s timeout
-          │             ▼                │
-          │        ┌─────────┐    Stop   │
-          │  ┌────►│ WORKING ├──────────┐│
-          │  │     └───┬─────┘          ││
-          │  │         │                ▼▼
-          │  │         │ PermissionReq ┌─────────┐
-          │  │         └──────────────►│  DONE   │
-          │  │                        └─────────┘
-          │  │     ┌─────────┐
-          │  └─────│ WAITING │
-          │        └─────────┘
-          │
-          └──────── ERROR ──── 30s timeout ──┘
+                          ┌─────────┐
+      UserPromptSubmit ──►│  IDLE   │◄──────────── 60s timeout
+         / PreToolUse     └────┬────┘
+                              │
+                              ▼
+     PostToolUse / ┌─────┐  ┌─────────┐    Stop    ┌─────────┐
+     PreToolUse ──►│WAIT │◄─│ WORKING ├───────────►│  DONE   │
+                   │ ING │  └─────────┘            └─────────┘
+                   └─────┘
+                       ▲
+                       │  PermissionRequest
+                       │
+          ┌──────── ERROR ──── 30s timeout ──┐
 ```
 
 ### 为什么 DONE→IDLE 是 60 秒而不是永久
 
-DONE 状态表示 Claude 刚完成一个任务。如果下一个任务在 60 秒内开始（`PreToolUse` 触发），直接切换到 WORKING 而不经过 IDLE，托盘颜色从红直接变绿，给用户 "连续工作" 的视觉暗示。60 秒无事件后恢复到 IDLE（灰色），表示 "当前无活动 session"。
+DONE 状态表示 Claude 刚完成一个任务。当用户提交新 prompt（`UserPromptSubmit` 触发）或 Claude 调用新工具（`PreToolUse` 触发）时，直接切换到 WORKING 而不经过 IDLE，托盘颜色从红直接变绿，给用户 "连续工作" 的视觉暗示。60 秒无事件后恢复到 IDLE（灰色），表示 "当前无活动 session"。
 
 ### 为什么 WAITING 没有超时退化
 

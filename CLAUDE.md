@@ -60,7 +60,7 @@ Claude Code 桌面状态提示工具 — 系统托盘图标 + 声音 + 桌面通
 ## 架构速览
 
 ```
-Claude Code hooks (PreToolUse/PostToolUse/Stop/PermissionRequest)
+Claude Code hooks (UserPromptSubmit/PreToolUse/PostToolUse/Stop/PermissionRequest)
     │ echo '{"event":"..."}' | nc -U /tmp/claude-status.sock
     ▼
 IPC Listener (interprocess v2) → mpsc::channel → 状态机 (state.rs)
@@ -82,6 +82,8 @@ IPC Listener (interprocess v2) → mpsc::channel → 状态机 (state.rs)
 - **音频**: `include_bytes!` 内嵌 WAV → `rodio::Decoder` 解码播放
 - **错误**: `anyhow` 全项目统一，音频 `catch_unwind` 静默降级
 - **Hook 格式**: `{matcher: "", hooks: [{type: "command", command: "..."}]}` — 必须嵌套
+- **Hook 事件**: `UserPromptSubmit` + `PreToolUse` → working, `PostToolUse` → resumed, `Stop` → done, `PermissionRequest` → waiting
+  - `UserPromptSubmit` 在用户提交 prompt 时立即触发，确保 thinking 阶段图标就变绿，比 `PreToolUse` 更早
 - **GTK 事件泵**: 主循环每次迭代后 `while gtk::events_pending() { gtk::main_iteration_do(false); }`
 
 ## 已完成 (v0.1.0)

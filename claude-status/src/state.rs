@@ -59,7 +59,7 @@ impl DaemonState {
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "event")]
 pub enum HookEvent {
-    /// PreToolUse 触发 → Claude 开始工作
+    /// UserPromptSubmit 或 PreToolUse 触发 → Claude 开始工作/思考
     #[serde(rename = "working")]
     Working,
     /// Stop 触发 → Claude 完成当前任务

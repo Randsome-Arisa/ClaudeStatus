@@ -19,6 +19,9 @@ fn hook_configs() -> Vec<(&'static str, String)> {
     #[cfg(target_os = "windows")]
     {
         vec![
+            // UserPromptSubmit 在用户提交 prompt 时立即触发，
+            // 比 PreToolUse 更早，确保 thinking 阶段图标就变绿。
+            ("UserPromptSubmit",  r#"claude-status-send.exe --event working"#.into()),
             ("PreToolUse",        r#"claude-status-send.exe --event working"#.into()),
             ("PostToolUse",       r#"claude-status-send.exe --event resumed"#.into()),
             ("Stop",              r#"claude-status-send.exe --event done"#.into()),
@@ -28,6 +31,9 @@ fn hook_configs() -> Vec<(&'static str, String)> {
     #[cfg(not(target_os = "windows"))]
     {
         vec![
+            // UserPromptSubmit 在用户提交 prompt 时立即触发，
+            // 比 PreToolUse 更早，确保 thinking 阶段图标就变绿。
+            ("UserPromptSubmit",  r#"echo '{"event":"working"}' | nc -w 1 -U /tmp/claude-status.sock || true"#.into()),
             ("PreToolUse",        r#"echo '{"event":"working"}' | nc -w 1 -U /tmp/claude-status.sock || true"#.into()),
             ("PostToolUse",       r#"echo '{"event":"resumed"}' | nc -w 1 -U /tmp/claude-status.sock || true"#.into()),
             ("Stop",              r#"echo '{"event":"done"}' | nc -w 1 -U /tmp/claude-status.sock || true"#.into()),
